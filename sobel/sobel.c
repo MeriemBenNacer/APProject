@@ -2,11 +2,11 @@
   This code performs edge detection using a Sobel filter on a video stream meant as input to a neural network
 */
 #include <time.h>
-#include <math.h>
+//#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <emmintrin.h>
-
+#include <mm_malloc.h>
 //
 #include "common.h"
 
@@ -71,14 +71,24 @@ void sobel_baseline(u8 *cframe, u8 *oframe, f32 threshold)
 		1, 2, 1 }; //3x3 matrix
   
   //
+  float x=0;
   for (u64 i = 0; i < (H - 3); i++)
     for (u64 j = 0; j < ((W * 3) - 3); j++)
       {
 	gx = convolve_baseline(&cframe[INDEX(i, j, W * 3)], f1, 3, 3);
 	gy = convolve_baseline(&cframe[INDEX(i, j, W * 3)], f2, 3, 3);
-      
-	mag = sqrt((gx * gx) + (gy * gy));
-	
+    
+   //mag= sqrt((gx*gx)+(gy*gy));
+   
+f64 x_half = 0.5f * ((gx * gx) + (gy * gy));
+i32 i = (int)*&x_half;  // convert x to int and store as i
+i = 0x5f3759df - (i >> 1);  // initial approximation of 1/sqrt(x)
+x_half = (float)*&i;  // convert i back to float and store as x
+x_half = x_half * (1.5f - x_half * x_half * 0.5f * ((gx * gx) + (gy * gy)));  // perform one iteration of Newton-Raphson approximation
+mag = x_half * ((gx * gx) + (gy * gy));  
+// use x as approximation of 1/sqrt(gx*gx + gy*gy) and multiply by (gx*gx + gy*gy) to get final approximation of sqrt(gx*gx + gy*gy)
+
+
 	oframe[INDEX(i, j, W * 3)] = (mag > threshold) ? 255 : mag;
       }
 }
@@ -102,9 +112,13 @@ int main(int argc, char **argv)
   //
   u64 nb_bytes = 1, frame_count = 0, samples_count = 0;
   
-  //
-  u8 *cframe = _mm_malloc(size, 32);
-  u8 *oframe = _mm_malloc(size, 32);
+  // Allignement en mémoire avec aligned_malloc 
+
+  u8 *cframe = (u8*)_aligned_malloc(size, 32);  
+  u8 *oframe = (u8*)_aligned_malloc(size, 32); 
+ 
+  //u8 *cframe = _mm_malloc(size, 32);
+  //u8 *oframe = _mm_malloc(size, 32);
 
   //
   FILE *fpi = fopen(argv[1], "rb"); 
@@ -145,10 +159,10 @@ int main(int argc, char **argv)
       while (elapsed_ns <= 0.0);
       
       //Seconds
-      elapsed_s = elapsed_ns / 1e9;
+      elapsed_s = elapsed_ns * (1.0 / 1e9);
       
       //2 arrays
-      mib_per_s = ((f64)(nb_bytes << 1) / (1024.0 * 1024.0)) / elapsed_s;
+      mib_per_s = ((f64)(nb_bytes << 1) * (1.0 / (1024.0 * 1024.0))) * (1.0 / elapsed_s);
       
       //
       if (samples_count < MAX_SAMPLES)
@@ -180,10 +194,10 @@ int main(int argc, char **argv)
   min = samples[0];
   max = samples[samples_count - 1];
   
-  elapsed_s = mea / 1e9;
+  elapsed_s = mea * (1.0/1e9);
 
   //2 arrays (input & output)
-  mib_per_s = ((f64)(size << 1) / (1024.0 * 1024.0)) / elapsed_s;
+ mib_per_s = ((f64)(size << 1) *( 1.0 / (1024.0 * 1024.0))) * (1.0 / elapsed_s);
   
   //
   fprintf(stderr, "\n%20llu bytes; %15.3lf ns; %15.3lf ns; %15.3lf ns; %15.3lf MiB/s; %15.3lf %%;\n",
@@ -192,7 +206,7 @@ int main(int argc, char **argv)
 	  max,
 	  mea,
 	  mib_per_s,
-	  (dev * 100.0 / mea));
+	  (dev * 100.0 * (1.0 / mea)));
   
   //
   _mm_free(cframe);
