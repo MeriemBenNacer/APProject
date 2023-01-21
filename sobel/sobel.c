@@ -2,12 +2,12 @@
   This code performs edge detection using a Sobel filter on a video stream meant as input to a neural network
 */
 #include <time.h>
-//#include <math.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <emmintrin.h>
 #include <immintrin.h>
-#include <xmmintrin.h>
+#include <omp.h>
 
 //
 #include "common.h"
@@ -33,7 +33,7 @@ void grayscale_weighted(u8 *frame)
 //Convert an image to its grayscale equivalent - bad color precision
 void grayscale_sampled(u8 *frame)
 {
-  __m128 vector_gray;
+   __m128 vector_gray;
 
 for (u64 i = 0; i < H * W * 3; i += 12) {
     vector_gray = _mm_set1_ps(frame[i]);
@@ -46,19 +46,14 @@ for (u64 i = 0; i < H * W * 3; i += 12) {
 //
 i32 convolve_baseline(u8 *m, i32 *f, u64 fh, u64 fw)
 {
- __m256i vector_m, vector_f;
-__m256 result;
-i32 r = 0;
 
-for (u64 i = 0; i < fh; i++) {
-    for (u64 j = 0; j < fw; j += 8){
-        vector_m = _mm256_loadu_si256((__m256i*)(m + INDEX(i, j, fw)));
-        vector_f = _mm256_loadu_si256((__m256i*)(f + INDEX(i, j, fw)));
-        result = _mm256_dp_ps(_mm256_cvtepi32_ps(vector_m), _mm256_cvtepi32_ps(vector_f), 0xff);
-        r += _mm256_cvtsd_f32(result);
-    }
-}
-return r;
+  i32 r = 0;
+ #pragma omp parrallel for reduction
+  for (u64 i = 0; i < fh; i++){
+    for (u64 j = 0; j < fw; j++){
+      r += m[INDEX(i, j, fw)] * f[INDEX(i, j, fw)];}
+  }
+  return r;
 }
 
 //
@@ -76,18 +71,18 @@ void sobel_baseline(u8 *cframe, u8 *oframe, f32 threshold)
 		1, 2, 1 }; //3x3 matrix
   
   //
-  float x=0;
-  for (u64 i = 0; i < (H - 3); i++)
+  #pragma omp parrallel for reduction
+  for (u64 i = 0; i < (H - 3); i++){
     for (u64 j = 0; j < ((W * 3) - 3); j++)
       {
 	gx = convolve_baseline(&cframe[INDEX(i, j, W * 3)], f1, 3, 3);
 	gy = convolve_baseline(&cframe[INDEX(i, j, W * 3)], f2, 3, 3);
-    
-   mag= approx_sqrt((gx*gx)+(gy*gy));
-    
-
+      
+	mag = approx_sqrt((gx * gx) + (gy * gy));
+	
 	oframe[INDEX(i, j, W * 3)] = (mag > threshold) ? 255 : mag;
       }
+ }
 }
 
 //
@@ -108,14 +103,12 @@ int main(int argc, char **argv)
   f64 samples[MAX_SAMPLES];
   //
   u64 nb_bytes = 1, frame_count = 0, samples_count = 0;
-  
-  // Allignement en mémoire avec aligned_malloc 
-
-  u8 *cframe = (u8*)_aligned_malloc(size, 32);  
-  u8 *oframe = (u8*)_aligned_malloc(size, 32); 
- 
-  //u8 *cframe = _mm_malloc(size, 32);
-  //u8 *oframe = _mm_malloc(size, 32);
+  // test allignement en mémoire avec aligned_malloc
+  /*u8 *cframe = (u8*)_aligned_malloc(size, 32);  
+  u8 *oframe = (u8*)_aligned_malloc(size, 32); */
+  //
+  u8 *cframe = _mm_malloc(size, 32);
+  u8 *oframe = _mm_malloc(size, 32);
 
   //
   FILE *fpi = fopen(argv[1], "rb"); 
@@ -159,7 +152,7 @@ int main(int argc, char **argv)
       elapsed_s = elapsed_ns * (1.0 / 1e9);
       
       //2 arrays
-      mib_per_s = ((f64)(nb_bytes << 1) * ((1.0 / (1024.0 * 1024.0)) * (1.0 / elapsed_s)));
+      mib_per_s = ((f64)(nb_bytes << 1) / (1.0 / (1024.0 * 1024.0))) * (1.0 / elapsed_s);
       
       //
       if (samples_count < MAX_SAMPLES)
@@ -191,10 +184,10 @@ int main(int argc, char **argv)
   min = samples[0];
   max = samples[samples_count - 1];
   
-  elapsed_s = mea * (1.0/1e9);
+  elapsed_s = mea * (1.0 / 1e9);
 
   //2 arrays (input & output)
- mib_per_s = ((f64)(size << 1) *( 1.0 / (1024.0 * 1024.0))) * (1.0 / elapsed_s);
+  mib_per_s = ((f64)(size << 1) * (1.0/(1024.0 * 1024.0)))*(1.0 /elapsed_s);
   
   //
   fprintf(stderr, "\n%20llu bytes; %15.3lf ns; %15.3lf ns; %15.3lf ns; %15.3lf MiB/s; %15.3lf %%;\n",
@@ -203,7 +196,7 @@ int main(int argc, char **argv)
 	  max,
 	  mea,
 	  mib_per_s,
-	  (dev * 100.0 * (1.0 / mea)));
+	  (dev * 100.0 * (1.0/mea)));
   
   //
   _mm_free(cframe);
