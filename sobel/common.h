@@ -31,3 +31,6 @@ f64 mean(f64 *a, u64 n);
 
 //Standard deviation
 f64 stddev(f64 *a, u64 n);
+
+//optimisation sqrt
+f32 approx_sqrt(f32 x);
