@@ -6,7 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <emmintrin.h>
-#include <mm_malloc.h>
+#include <immintrin.h>
+#include <xmmintrin.h>
+
 //
 #include "common.h"
 
@@ -31,29 +33,32 @@ void grayscale_weighted(u8 *frame)
 //Convert an image to its grayscale equivalent - bad color precision
 void grayscale_sampled(u8 *frame)
 {
-  for (u64 i = 0; i < H * W * 3; i += 3)
-    {
-      //R: light gray
-      //G: medium gray
-      //B: dark gray
-      u8 gray = frame[i];
-      
-      frame[i]     = gray;
-      frame[i + 1] = gray;
-      frame[i + 2] = gray;
-    }
+  __m128 vector_gray;
+
+for (u64 i = 0; i < H * W * 3; i += 12) {
+    vector_gray = _mm_set1_ps(frame[i]);
+    _mm_storeu_ps(frame + i, vector_gray);
+    _mm_storeu_ps(frame + i + 4, vector_gray);
+    _mm_storeu_ps(frame + i + 8, vector_gray);
+}
 }
 
 //
 i32 convolve_baseline(u8 *m, i32 *f, u64 fh, u64 fw)
 {
-  i32 r = 0;
+ __m256i vector_m, vector_f;
+__m256 result;
+i32 r = 0;
 
-  for (u64 i = 0; i < fh; i++)
-    for (u64 j = 0; j < fw; j++)
-      r += m[INDEX(i, j, fw)] * f[INDEX(i, j, fw)];
-  
-  return r;
+for (u64 i = 0; i < fh; i++) {
+    for (u64 j = 0; j < fw; j += 8){
+        vector_m = _mm256_loadu_si256((__m256i*)(m + INDEX(i, j, fw)));
+        vector_f = _mm256_loadu_si256((__m256i*)(f + INDEX(i, j, fw)));
+        result = _mm256_dp_ps(_mm256_cvtepi32_ps(vector_m), _mm256_cvtepi32_ps(vector_f), 0xff);
+        r += _mm256_cvtsd_f32(result);
+    }
+}
+return r;
 }
 
 //
@@ -78,16 +83,8 @@ void sobel_baseline(u8 *cframe, u8 *oframe, f32 threshold)
 	gx = convolve_baseline(&cframe[INDEX(i, j, W * 3)], f1, 3, 3);
 	gy = convolve_baseline(&cframe[INDEX(i, j, W * 3)], f2, 3, 3);
     
-   //mag= sqrt((gx*gx)+(gy*gy));
-   
-f64 x_half = 0.5f * ((gx * gx) + (gy * gy));
-i32 i = (int)*&x_half;  // convert x to int and store as i
-i = 0x5f3759df - (i >> 1);  // initial approximation of 1/sqrt(x)
-x_half = (float)*&i;  // convert i back to float and store as x
-x_half = x_half * (1.5f - x_half * x_half * 0.5f * ((gx * gx) + (gy * gy)));  // perform one iteration of Newton-Raphson approximation
-mag = x_half * ((gx * gx) + (gy * gy));  
-// use x as approximation of 1/sqrt(gx*gx + gy*gy) and multiply by (gx*gx + gy*gy) to get final approximation of sqrt(gx*gx + gy*gy)
-
+   mag= approx_sqrt((gx*gx)+(gy*gy));
+    
 
 	oframe[INDEX(i, j, W * 3)] = (mag > threshold) ? 255 : mag;
       }
@@ -162,7 +159,7 @@ int main(int argc, char **argv)
       elapsed_s = elapsed_ns * (1.0 / 1e9);
       
       //2 arrays
-      mib_per_s = ((f64)(nb_bytes << 1) * (1.0 / (1024.0 * 1024.0))) * (1.0 / elapsed_s);
+      mib_per_s = ((f64)(nb_bytes << 1) * ((1.0 / (1024.0 * 1024.0)) * (1.0 / elapsed_s)));
       
       //
       if (samples_count < MAX_SAMPLES)
