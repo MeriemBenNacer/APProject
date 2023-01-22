@@ -1,0 +1,8 @@
+             
+Donnée 1    5529600 bytes;
+Donnée 2	219132227.000 ns;
+Donnée 3	526892538.000 ns;
+Donnée 4	250769290.520 ns;
+Donnée 5	21.029 MiB/s;
+Donnée 6	1131638.718 %;
+
